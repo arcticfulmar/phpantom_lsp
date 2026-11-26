@@ -224,6 +224,11 @@ impl PhpType {
         let (left, left_nullable) = self.nullable_array_shape_parts()?;
         let (right, right_nullable) = other.nullable_array_shape_parts()?;
         let joined = PhpType::array_shape(Self::join_shape_entries(left, right)?);
+        let joined = if self.is_list_shape() && other.is_list_shape() {
+            PhpType::as_list_shape(joined)
+        } else {
+            joined
+        };
         if left_nullable || right_nullable {
             Some(PhpType::nullable(joined))
         } else {
@@ -275,9 +280,12 @@ impl PhpType {
     /// positional entry an append added beside named keys lines up with
     /// the index it sits at. Keys from `a` keep their order; keys only in
     /// `b` follow in `b`'s order. Returns `None` when either side's keys
-    /// are not decidable, and when both sides are a bare list of values:
-    /// two literals written slot by slot describe unrelated arrays, and
-    /// pairing their slots up would invent a row neither one holds.
+    /// are not decidable, and when both sides are a bare list of values
+    /// that differ at more than one slot: two literals written slot by slot
+    /// describe unrelated arrays, and pairing their slots up would invent a
+    /// row neither one holds. Two that differ at a single slot are the
+    /// exception, since joining that one slot describes exactly the two
+    /// arrays and nothing else (see [`differ_at_one_key_at_most`]).
     ///
     /// When only one side is a bare list, the other side's explicit key at
     /// each shared position is the anchor that makes pairing safe, *if* the
@@ -289,6 +297,7 @@ impl PhpType {
     /// `int|string` at a slot neither alternative holds both of.
     ///
     /// [`join_shapes`]: Self::join_shapes
+    /// [`differ_at_one_key_at_most`]: Self::differ_at_one_key_at_most
     fn join_shape_entries(a: &[ShapeEntry], b: &[ShapeEntry]) -> Option<Vec<ShapeEntry>> {
         fn is_value_list(entries: &[ShapeEntry]) -> bool {
             entries.iter().any(|entry| entry.key.is_none())
@@ -302,9 +311,10 @@ impl PhpType {
         let a_is_list = is_value_list(a);
         let b_is_list = is_value_list(b);
         if a_is_list && b_is_list {
-            return None;
-        }
-        if a_is_list || b_is_list {
+            if !Self::differ_at_one_key_at_most(a, b)? {
+                return None;
+            }
+        } else if a_is_list || b_is_list {
             let (list_side, keyed_side) = if a_is_list { (a, b) } else { (b, a) };
             let list_keys = runtime_shape_keys(list_side)?;
             let keyed_keys = runtime_shape_keys(keyed_side)?;
@@ -331,6 +341,41 @@ impl PhpType {
             }
         }
         Self::merge_shape_entries(a, b)
+    }
+
+    /// Whether two shapes hold the same entries at every runtime key but
+    /// one at most. `None` when either side's keys are not decidable.
+    ///
+    /// Joining such a pair key by key is exact: `array{X, A}|array{X, B}`
+    /// is `array{X, A|B}`, and `array{X}|array{X, A}` is `array{X, 1?: A}`.
+    /// A second differing key is what makes a join invent combinations
+    /// neither side holds, so an entry counts as differing whenever
+    /// anything about it does: its value, whether it may be absent, or
+    /// being there at all.
+    ///
+    /// Without this, a positional shape written through one slot in a run
+    /// of branches keeps one alternative per path, and the alternatives
+    /// double at every branch.
+    fn differ_at_one_key_at_most(a: &[ShapeEntry], b: &[ShapeEntry]) -> Option<bool> {
+        let keys_a = runtime_shape_keys(a)?;
+        let keys_b = runtime_shape_keys(b)?;
+        let mut differing = keys_b.iter().filter(|key| !keys_a.contains(key)).count();
+        for (entry, key) in a.iter().zip(&keys_a) {
+            let same = keys_b
+                .iter()
+                .position(|other| other == key)
+                .is_some_and(|index| {
+                    entry.optional == b[index].optional
+                        && entry.value_type.equivalent(&b[index].value_type)
+                });
+            if !same {
+                differing += 1;
+                if differing > 1 {
+                    return Some(false);
+                }
+            }
+        }
+        Some(differing <= 1)
     }
 
     /// Pair the entries of two shapes by runtime key, unconditionally: a key

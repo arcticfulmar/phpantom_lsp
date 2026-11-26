@@ -1249,6 +1249,49 @@ fn join_shapes_positional_entry_anchors_to_an_agreeing_explicit_key() {
 }
 
 #[test]
+fn join_shapes_positional_shapes_join_when_one_slot_differs() {
+    // With every other slot the same, joining the one that differs
+    // describes exactly the two arrays and nothing else.
+    assert_eq!(
+        PhpType::parse("array{int, 'a'}").join_shapes(&PhpType::parse("array{int, 'b'}")),
+        Some(PhpType::parse("array{int, 'a'|'b'}"))
+    );
+    // Shapes in that slot join the way they would on their own, so a slot
+    // written through in a run of branches stays one shape.
+    assert_eq!(
+        PhpType::parse("array{int, array{a: int}}")
+            .join_shapes(&PhpType::parse("array{int, array{a: int, b: string}}")),
+        Some(PhpType::parse("array{int, array{a: int, b?: string}}"))
+    );
+    // A slot only one side has is the one difference, and may be absent.
+    assert_eq!(
+        PhpType::parse("array{int}").join_shapes(&PhpType::parse("array{int, string}")),
+        Some(PhpType::parse("array{int, 1?: string}"))
+    );
+    assert_eq!(
+        PhpType::parse("array{int, 1?: 'a'}").join_shapes(&PhpType::parse("array{int, 'b'}")),
+        Some(PhpType::parse("array{int, 1?: 'a'|'b'}"))
+    );
+    assert_eq!(
+        PhpType::parse("list{int, 'a'}").join_shapes(&PhpType::parse("list{int, 'b'}")),
+        Some(PhpType::parse("list{int, 'a'|'b'}"))
+    );
+
+    // Two differing slots are two rows, and pairing them up would allow
+    // `array{1, 'b'}`, which neither side holds.
+    assert_eq!(
+        PhpType::parse("array{1, 'a'}").join_shapes(&PhpType::parse("array{2, 'b'}")),
+        None
+    );
+    // A slot that may be absent on one side only differs just as much as
+    // one holding another value.
+    assert_eq!(
+        PhpType::parse("array{1, 1?: 'a'}").join_shapes(&PhpType::parse("array{2, 'a'}")),
+        None
+    );
+}
+
+#[test]
 fn join_shapes_key_order_is_first_side_then_new_keys() {
     let a = PhpType::parse("array{b: int, a: int}");
     let b = PhpType::parse("array{c: int, a: int}");
