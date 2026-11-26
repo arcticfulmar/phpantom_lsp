@@ -882,3 +882,60 @@ function f(bool $a, bool $b, bool $d): void {
         ],
     );
 }
+
+/// A slot of a positional array written through in a run of branches stays
+/// one shape whose keys are optional, rather than one alternative per path
+/// through the branches, which doubled at every branch.
+#[test]
+fn conditional_writes_below_a_positional_slot_fold_into_one_shape() {
+    let content = r#"<?php
+function f(bool $a, bool $b, bool $c): void {
+    $dom = [[], []];
+    $key = 1;
+    if ($a) { $dom[$key]['x'] = 'a'; }
+    if ($b) { $dom[$key]['y'] = 'b'; }
+    if ($c) { $dom[$key]['z'] = 'c'; }
+    echo /*DOM*/$dom;
+}
+"#;
+    assert_marked_types(
+        content,
+        &[("DOM", "array{array{}, array{x?: 'a', y?: 'b', z?: 'c'}}")],
+    );
+}
+
+/// The walk over a loop whose body writes below one slot in many branches
+/// finishes: each branch used to double the alternatives the array held,
+/// and each pass over the loop added the same keys again in another order.
+#[test]
+fn many_conditional_writes_below_a_positional_slot_in_a_loop_finish() {
+    let mut body = String::new();
+    for i in 0..40 {
+        body.push_str(&format!(
+            "        if ($flags[{i}]) {{ $dom[$key]['k{i}'] = $flags[{i}]; }}\n"
+        ));
+    }
+    let content = format!(
+        r#"<?php
+/** @param list<bool> $flags */
+function f(array $flags, int $max): void {{
+    $dom = [[]];
+    $key = 1;
+    $i = 0;
+    while ($i < $max) {{
+{body}        $dom[$key]['value'] = 'v';
+        ++$i;
+    }}
+    echo /*DOM*/$dom;
+}}
+"#
+    );
+    let backend = create_test_backend_with_full_stubs();
+    let uri = "file:///array_key_types.php";
+    backend.update_ast(uri, &content);
+    let resolved = type_at_marker(&backend, uri, &content, "DOM");
+    assert!(
+        resolved.len() < 4096,
+        "the array stays a handful of shapes: {resolved}"
+    );
+}

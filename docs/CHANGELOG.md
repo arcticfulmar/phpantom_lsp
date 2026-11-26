@@ -123,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A corrupt `.phar` no longer crashes the server.** An archive whose header claims more files than it holds is skipped during indexing instead of aborting the process. Reported by @bhavyamalhotra2210.
 - **A project file that leads to a device no longer hangs or crashes the server.** A symlink, or an entry in Composer's generated autoload files, that points at something like `/dev/zero` or a pipe is skipped instead of read.
 - **Created views and moved classes stay inside the project.** On Windows, a view name with a drive letter no longer offers to create a file outside the view directory, and `phpantom_lsp move` refuses a destination that a `..` in the autoload paths would take outside the project.
+- **Files that build a nested array across many branches no longer hang the server.** A loop that writes below one slot of an array in dozens of `if` branches, as TCPDF's HTML parser does, kept a CPU core busy indefinitely after startup, when the file was opened, and under `analyze`. TCPDF's `tcpdf.php` now analyses in about two seconds. Contributed by @arcticfulmar.
 
 ## [1.1.0] - 2026-11-24
 
